@@ -11,17 +11,18 @@ using std::back_inserter;
 
 template<typename Data> 
 class PCQueue {
-  private:
-    mutex mutexLock;
-    condition_variable condition;
-    deque<Data> buffer;
+private:
+  bool isWriting = false;
+  bool isDraining = false;
+  mutex mutexLock;
+  condition_variable condition;
+  deque<Data> buffer;
 
-  public:
-    PCQueue();
-    void write(Data data);
-    Data read();
-    deque<Data> readAll();
-    ~PCQueue();
+public:
+  PCQueue();
+  void write(Data data);
+  deque<Data> drain();
+  ~PCQueue();
 };
 
 template<typename Data> 
@@ -29,37 +30,27 @@ PCQueue<Data>::PCQueue() {}
 
 template<typename Data>
 void PCQueue<Data>::write(Data data) {
-  while (true) {
-    unique_lock<mutex> locker(mutexLock);
-    buffer.push_back(data);
-    locker.unlock();
-    condition.notify_all();
-    return;
-  }
-}
-
-template<typename Data>
-Data PCQueue<Data>::read() {
-  while (true) {
-    unique_lock<mutex> locker(mutexLock);
-    condition.wait(locker, [this](){
-      return buffer.size() > 0;
-    });
-    Data data = buffer.front();
-    buffer.pop_front();
-    locker.unlock();
-    condition.notify_all();
-    return data;
-  }
-}
-
-template<typename Data>
-deque<Data> PCQueue<Data>::readAll() {
   unique_lock<mutex> locker(mutexLock);
+  condition.wait(locker, [this](){return !isDraining;});
+  isWriting = true;
+  buffer.push_back(data);
+  isWriting = false;
+  locker.unlock();
+  condition.notify_one();
+  return;
+}
+
+template<typename Data>
+deque<Data> PCQueue<Data>::drain() {
+  unique_lock<mutex> locker(mutexLock);
+  condition.wait(locker, [this](){return !isWriting;});
+  isDraining = true;
   deque<Data> result;
   copy(buffer.begin(), buffer.end(), back_inserter(result));
   buffer.clear();
+  isDraining = false;
   locker.unlock();
+  condition.notify_one();
   return result;
 }
 

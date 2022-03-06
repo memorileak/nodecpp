@@ -1,6 +1,8 @@
+#include <thread>
+#include <chrono>
+#include <deque>
 #include <node.h>
 #include <nan.h>
-#include <deque>
 
 #include "./pcqueue.cpp"
 
@@ -8,55 +10,39 @@ using namespace v8;
 using namespace Nan;
 using std::deque;
 
-// void factorize(uint32_t n) {
-//   while (n % 2 == 0) {
-//     writeToNode(2);
-//     n = n/2;
-//   }
-//   for (uint32_t i = 3; i <= n; i = i+2) {
-//     while (n % i == 0) {
-//       writeToNode(i);
-//       n = n/i;
-//     }
-//   }
-// }
-
-// void writeToNode(uint32_t a) {
-
-// }
-
 class Factorizer: public AsyncProgressWorker {
-  private:
-    PCQueue<uint32_t> messageQueue;
-    void drainMessageQueue();
-    void writeToNode(const AsyncProgressWorker::ExecutionProgress& progress, uint32_t& factor);
+private:
+  PCQueue<uint32_t> messageQueue;
+  void drainMessageQueue();
+  void writeToNode(const AsyncProgressWorker::ExecutionProgress& progress, uint32_t& factor);
 
-  protected:
-    Callback* progress;
-    uint32_t n;
+protected:
+  Callback* progressCallback;
+  uint32_t n;
 
-  public: 
-    Factorizer(Callback* progress, Callback* callback, uint32_t n);
-    ~Factorizer();
-    void Execute(const AsyncProgressWorker::ExecutionProgress& progress);
-    void HandleProgressCallback(const char* data, size_t size);
-    void HandleOKCallback();
+public: 
+  Factorizer(Callback* progress, Callback* callback, uint32_t n);
+  ~Factorizer();
+  void Execute(const AsyncProgressWorker::ExecutionProgress& progress);
+  void HandleProgressCallback(const char* data, size_t size);
+  void HandleOKCallback();
 };
 
-Factorizer::Factorizer(Callback* progress, Callback* callback, uint32_t n) 
-  : AsyncProgressWorker(callback) 
+Factorizer::Factorizer(Callback* progressCallback, Callback* completeCallback, uint32_t n) 
+  : AsyncProgressWorker(completeCallback) 
 {
-  this->progress = progress;
+  this->progressCallback = progressCallback;
   this->n = n;
 }
 
+// Run in Event loop
 void Factorizer::drainMessageQueue() {
   Nan::HandleScope scope;
-  for (uint32_t& item: messageQueue.readAll()) {
+  for (uint32_t& item: messageQueue.drain()) {
     Local<Value> argv[] = {
       New<Integer>(*reinterpret_cast<int*>(&item))
     };
-    progress->Call(1, argv, async_resource);
+    progressCallback->Call(1, argv, async_resource);
   }
 }
 
@@ -65,10 +51,7 @@ void Factorizer::writeToNode(
   uint32_t& factor
 ) {
   messageQueue.write(factor);
-  progress.Send(
-    reinterpret_cast<const char*>(&messageQueue),
-    sizeof(messageQueue)
-  );
+  progress.Send(reinterpret_cast<const char*>(""), sizeof(""));
 }
 
 void Factorizer::Execute(const AsyncProgressWorker::ExecutionProgress& progress) {
@@ -76,19 +59,23 @@ void Factorizer::Execute(const AsyncProgressWorker::ExecutionProgress& progress)
   while (n % 2 == 0) {
     writeToNode(progress, factor);
     n = n/2;
+    std::this_thread::sleep_for(std::chrono::seconds(1));
   }
   for (uint32_t i = 3; i <= n; i = i+2) {
     while (n % i == 0) {
       writeToNode(progress, i);
       n = n/i;
+      std::this_thread::sleep_for(std::chrono::seconds(1));
     }
   }
 }
 
+// Run in Event loop
 void Factorizer::HandleProgressCallback(const char* data, size_t size) {
   drainMessageQueue();
 }
 
+// Run in Event loop
 void Factorizer::HandleOKCallback() {
   drainMessageQueue();
   callback->Call(0, NULL, async_resource);
@@ -97,10 +84,10 @@ void Factorizer::HandleOKCallback() {
 Factorizer::~Factorizer() {}
 
 NAN_METHOD(Factor) {
-  Callback* progress = new Callback(info[1].As<v8::Function>());
-  Callback* callback = new Callback(info[2].As<v8::Function>());
+  Callback* progressCallback = new Callback(info[1].As<v8::Function>());
+  Callback* completeCallback = new Callback(info[2].As<v8::Function>());
   AsyncQueueWorker(
-    new Factorizer(progress, callback, Nan::To<uint32_t>(info[0]).FromJust())
+    new Factorizer(progressCallback, completeCallback, Nan::To<uint32_t>(info[0]).FromJust())
   );
 }
 
