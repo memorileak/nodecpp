@@ -1,6 +1,5 @@
 #include <thread>
 #include <chrono>
-#include <deque>
 #include <node.h>
 #include <nan.h>
 
@@ -8,7 +7,6 @@
 
 using namespace v8;
 using namespace Nan;
-using std::deque;
 
 class Factorizer: public AsyncProgressWorker {
 private:
